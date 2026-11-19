@@ -1,0 +1,16 @@
+{
+  "name": "ประปา อปท — ระบบจัดเก็บค่าน้ำประปา",
+  "short_name": "ประปา อปท",
+  "description": "ระบบจัดเก็บค่าน้ำประปาสำหรับองค์กรปกครองส่วนท้องถิ่น — จดมาตร ออกบิล รับชำระ ใช้งานออฟไลน์ได้",
+  "lang": "th",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef4fb",
+  "theme_color": "#0B4A8F",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
