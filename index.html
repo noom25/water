@@ -516,6 +516,7 @@ function showTab(t){
 $('#nav').addEventListener('click',e=>{const b=e.target.closest('button');if(b)showTab(b.dataset.t);});
 function renderHeader(){
   $('#hOrg').textContent=S().orgName?`${S().systemName} · ${S().orgName}`:'กรุณาตั้งค่าชื่อหน่วยงานที่เมนู ตั้งค่า';
+  document.title=S().orgName?`ระบบจัดเก็บค่าน้ำประปา · ${S().orgName}`:'ระบบจัดเก็บค่าน้ำประปา';
   const l=$('#hLogo');if(S().logo){l.src=S().logo;l.style.display='';$('#hLogoPh').style.display='none';}else{l.style.display='none';$('#hLogoPh').style.display='';}
 }
 
@@ -610,10 +611,10 @@ function renderUsers(){
     <div class="fld"><label>ค้นหา</label><input id="uQ" value="${esc(uQ)}" placeholder="เลขมาตร / ชื่อ / บ้านเลขที่" autocomplete="off"></div>
     <div class="fld"><label>หมู่</label><select id="uMoo">${mooOpts(uMoo)}</select></div>
     <button class="btn" onclick="editUser()">+ เพิ่มผู้ใช้น้ำ</button>
-    <button class="btn sec" onclick="importCSV()">📥 นำเข้าจาก Excel (CSV)</button>
-    <button class="btn sec" onclick="csvTemplate()">ดาวน์โหลดแบบฟอร์ม CSV</button>
+    <button class="btn sec" onclick="importCSV()">📥 นำเข้าจาก Excel</button>
+    <button class="btn sec" onclick="importTemplate()">ดาวน์โหลดแบบฟอร์ม Excel</button>
     <button class="btn sec" onclick="printUsers()">🖨️ พิมพ์ทะเบียน</button>
-    <button class="btn sec" onclick="exportUsersCSV()">⬇️ ส่งออกทะเบียน (CSV)</button>
+    <button class="btn sec" onclick="exportUsersXLSX()">⬇️ ส่งออกทะเบียน (Excel)</button>
     <button class="btn sec" onclick="exportGeoJSON()">🗺️ ส่งออกพิกัด (GeoJSON)</button>
   </div>
   <div class="muted" id="uCount">${usersCountText(list)}</div>
@@ -706,9 +707,13 @@ function userHistory(id){
   ${rs.map(r=>`<tr><td>${pLabel(r.period)}</td><td class="n">${fmt0(r.prev)}</td><td class="n">${fmt0(r.curr)}</td><td class="n">${fmt0(r.units)}</td><td class="n">${fmt(r.total)}</td><td>${r.paid?`<span class="tag ok">ชำระ ${esc(payById(r.payId)?.receiptNo||'')}</span>`:'<span class="tag bad">ค้าง</span>'}</td></tr>`).join('')||'<tr><td colspan="6" class="c muted">ยังไม่มีประวัติ</td></tr>'}
   </tbody></table></div><div style="text-align:right;margin-top:12px"><button class="btn sec" onclick="closeModal()">ปิด</button> ${rs.some(r=>!r.paid)?`<button class="btn ok" onclick="closeModal();goPay('${id}')">รับชำระ</button>`:''}</div>`);
 }
-function csvTemplate(){
-  const t='\ufeffเลขที่มาตร,ชื่อ-สกุล,บ้านเลขที่,หมู่ที่,เบอร์โทร,เลขมาตรเริ่มต้น,ละติจูด,ลองจิจูด\nA001,นายตัวอย่าง ใจดี,12/1,1,0812345678,0,14.712345,104.123456\n';
-  download(t,'แบบฟอร์มนำเข้าผู้ใช้น้ำ.csv','text/csv');
+const IMP_HEAD=['เลขที่มาตร','ชื่อ-สกุล','บ้านเลขที่','หมู่ที่','เบอร์โทร','เลขมาตรเริ่มต้น','ละติจูด','ลองจิจูด'];
+const IMP_TYPES=['text','text','text','text','text','num','num','num'];
+const IMP_WIDTH=[14,28,14,8,14,16,13,13];
+function importTemplate(){
+  downloadXLSX('แบบฟอร์มนำเข้าผู้ใช้น้ำ.xlsx','ทะเบียนผู้ใช้น้ำ',IMP_HEAD,
+    [['A001','นายตัวอย่าง ใจดี','12/1','1','0812345678',0,14.712345,104.123456]],IMP_TYPES,IMP_WIDTH);
+  toast('ช่องข้อความถูกตั้งเป็นแบบ "ข้อความ" ไว้แล้ว บ้านเลขที่ 23/2 จะไม่กลายเป็นวันที่');
 }
 function parseCSV(text){
   const rows=[];let row=[],cur='',q=false;
@@ -720,10 +725,46 @@ function parseCSV(text){
   if(cur||row.length){row.push(cur);rows.push(row);}
   return rows.filter(r=>r.some(x=>x.trim()));
 }
+/* ตรวจว่าไฟล์ที่เลือกเป็นไฟล์ข้อความ CSV จริงหรือไม่
+   กันกรณีผู้ใช้เลือก .xlsx/.xls/.pdf/.json แล้วเบราว์เซอร์อ่านไบนารีมาเป็นตัวอักษรมั่ว ๆ */
+function notCSVMsg(buf,name){
+  const b=new Uint8Array(buf||new ArrayBuffer(0));
+  const howExcel='\n\nวิธีแก้: เปิดไฟล์ด้วย Excel → File → Save As → เลือกชนิดไฟล์ "Excel Workbook (*.xlsx)" → แล้วค่อยนำเข้าไฟล์ .xlsx ที่ได้';
+  if(b[0]===0xD0&&b[1]===0xCF)return 'ไฟล์นี้เป็นไฟล์ Excel รุ่นเก่า (.xls) ซึ่งยังอ่านไม่ได้'+howExcel;
+  if(b[0]===0x25&&b[1]===0x50&&b[2]===0x44&&b[3]===0x46)return 'ไฟล์นี้เป็นไฟล์ PDF ไม่ใช่ไฟล์ CSV';
+  if(/\.json$/i.test(name||''))return 'ไฟล์นี้เป็นไฟล์สำรองข้อมูล (.json)\n\nถ้าต้องการกู้คืนข้อมูลทั้งหมด ให้ไปที่ ⚙️ ตั้งค่า → กู้คืนจากไฟล์ แทน';
+  for(let i=0;i<b.length;i++)if(b[i]===0)return 'ไฟล์นี้ไม่ใช่ไฟล์ข้อความ จึงนำเข้าไม่ได้';
+  return '';
+}
 function importCSV(){
-  pickFile('.csv',f=>{const rd=new FileReader();rd.onload=()=>{
+  pickFile('.xlsx,.csv',f=>{
+    const hd=new FileReader();
+    hd.onerror=()=>alert('อ่านไฟล์ไม่สำเร็จ');
+    hd.onload=()=>{
+      const b=new Uint8Array(hd.result);
+      const rd=new FileReader();
+      rd.onerror=()=>alert('อ่านไฟล์ไม่สำเร็จ');
+      if(b[0]===0x50&&b[1]===0x4B){                      // .xlsx (ไฟล์ zip)
+        rd.onload=()=>{
+          let rows;
+          try{ rows=xlsxFirstSheet(new Uint8Array(rd.result)); }
+          catch(e){ return alert('อ่านไฟล์ Excel ไม่สำเร็จ: '+(e&&e.message||e)+'\n\nข้อมูลเดิมไม่ถูกแก้ไข'); }
+          importRows(rows,f);
+        };
+        rd.readAsArrayBuffer(f);
+        return;
+      }
+      const msg=notCSVMsg(hd.result,f.name);
+      if(msg)return alert(msg+'\n\nข้อมูลเดิมไม่ถูกแก้ไข');
+      rd.onload=()=>importCSVText(String(rd.result),f);
+      rd.readAsText(f,'utf-8');
+    };
+    hd.readAsArrayBuffer(f.slice?f.slice(0,512):f);
+  });
+}
+function importCSVText(raw,f){importRows(parseCSV(String(raw).replace(/^﻿/,'')),f);}
+function importRows(rows,f){
    try{
-    const rows=parseCSV(String(rd.result).replace(/^﻿/,''));
     if(rows.length&&/มาตร|ชื่อ/.test(rows[0].join('')))rows.shift();
     if(!rows.length)return alert('ไม่พบข้อมูลในไฟล์');
     // ตรวจสอบก่อน แล้วค่อยบันทึกทีเดียว (กันข้อมูลเข้าไปครึ่ง ๆ กลาง ๆ)
@@ -732,6 +773,7 @@ function importCSV(){
     rows.forEach((r,i)=>{
       const meterNo=(r[0]||'').trim(),name=(r[1]||'').trim();
       if(!meterNo||!name){bad.push(`บรรทัด ${i+2}: ไม่มีเลขมาตรหรือชื่อ`);return;}
+      if(meterNo.length>40||name.length>150){bad.push(`บรรทัด ${i+2}: ข้อมูลยาวผิดปกติ (ไฟล์อาจไม่ใช่แบบฟอร์มนำเข้า)`);return;}
       if(have.has(meterNo)){bad.push(`บรรทัด ${i+2}: เลขมาตร ${meterNo} ซ้ำ`);return;}
       have.add(meterNo);
       let lat=null,lng=null;
@@ -744,6 +786,8 @@ function importCSV(){
       add.push({id:uid(),meterNo,name,houseNo:(r[2]||'').trim(),moo:(r[3]||'').trim(),phone:(r[4]||'').trim(),
         startReading:+String(r[5]||'').trim()||0,status:'active',note:'',lat,lng});
     });
+    if(rows.length>=3&&bad.length>rows.length*0.6)
+      return alert(`ไฟล์นี้ไม่ใช่แบบฟอร์มนำเข้าผู้ใช้น้ำ (เสียรูปแบบ ${bad.length} จาก ${rows.length} บรรทัด)\n\nให้กดปุ่ม "ดาวน์โหลดแบบฟอร์ม Excel" ไปกรอกก่อน แล้วค่อยนำเข้า\n\nข้อมูลเดิมไม่ถูกแก้ไข`);
     if(!add.length)return alert('ไม่มีรายการที่นำเข้าได้\n'+bad.slice(0,15).join('\n'));
     if(!confirm(`ตรวจสอบไฟล์แล้ว\n· นำเข้าได้ ${add.length} ราย\n· ข้าม ${bad.length} รายการ\n\nยืนยันนำเข้าหรือไม่?`))return;
     saveSnapshot('ก่อนนำเข้า').then(()=>{
@@ -756,7 +800,6 @@ function importCSV(){
       renderUsers();
     });
    }catch(e){alert('นำเข้าไม่สำเร็จ: '+(e&&e.message||e)+'\nข้อมูลเดิมไม่ถูกแก้ไข');}
-  };rd.readAsText(f,'utf-8');});
 }
 /* ===== ส่งออกข้อมูลสำหรับงานแผนที่ภาษี / QGIS ===== */
 function usersWithCoord(){return DB.users.filter(u=>u.lat!=null&&u.lng!=null&&isFinite(u.lat)&&isFinite(u.lng));}
@@ -785,17 +828,17 @@ function exportGeoJSON(){
   download(JSON.stringify(fc,null,1),`มาตรน้ำ_${(S().orgName||'อบต').replace(/[\\/:*?"<>|]/g,'')}_${today()}.geojson`,'application/geo+json');
   toast(`ส่งออก ${list.length} จุดแล้ว`);
 }
-function exportUsersCSV(){
-  const head=['เลขที่มาตร','ชื่อ-สกุล','บ้านเลขที่','หมู่ที่','เบอร์โทร','เลขมาตรเริ่มต้น','ละติจูด','ลองจิจูด',
-    'สถานะ','จำนวนเดือนที่มีบิล','เฉลี่ยหน่วย/เดือน','เดือนล่าสุด','หน่วยล่าสุด','ค้างกี่เดือน','ยอดค้าง','หมายเหตุ'];
+function exportUsersXLSX(){
+  const head=[...IMP_HEAD,'สถานะ','จำนวนเดือนที่มีบิล','เฉลี่ยหน่วย/เดือน','เดือนล่าสุด','หน่วยล่าสุด','ค้างกี่เดือน','ยอดค้าง','หมายเหตุ'];
+  const types=[...IMP_TYPES,'text','num','num','text','num','num','num','text'];
+  const widths=[...IMP_WIDTH,10,16,15,12,12,11,11,24];
   const rows=[...DB.users].sort(cmpU).map(u=>{const st=userStats(u);return[
     u.meterNo,u.name,u.houseNo,u.moo,u.phone,u.startReading,
     u.lat==null?'':u.lat,u.lng==null?'':u.lng,
     u.status==='inactive'?'งดใช้':'ใช้งาน',
     st.months,st.avgUnits,st.lastPeriod,st.lastUnits==null?'':st.lastUnits,
     st.unpaidMonths,st.unpaidAmount,u.note||''];});
-  const csv='\ufeff'+[head,...rows].map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
-  download(csv,`ทะเบียนผู้ใช้น้ำ_${today()}.csv`,'text/csv');
+  downloadXLSX(`ทะเบียนผู้ใช้น้ำ_${today()}.xlsx`,'ทะเบียนผู้ใช้น้ำ',head,rows,types,widths);
   toast(`ส่งออก ${rows.length} ราย`);
 }
 function printUsers(){
@@ -1340,6 +1383,187 @@ function downloadBytes(bytes,name,type){
   const url=URL.createObjectURL(new Blob([bytes],{type}));
   const a=document.createElement('a');a.href=url;a.download=name;a.click();
   setTimeout(()=>URL.revokeObjectURL(url),4000);
+}
+
+/* ===== ตัวเขียนไฟล์ Excel (.xlsx) อย่างง่าย =====
+   เหตุผลที่ต้องมี: ถ้าส่งออกเป็น CSV แล้วเปิดด้วย Excel
+   เบอร์โทร 0862992312 จะกลายเป็น 862992312 (ศูนย์หน้าหาย)
+   และบ้านเลขที่ 23/2 จะกลายเป็นวันที่ 23 ก.พ.
+   ไฟล์ .xlsx กำหนดรูปแบบช่องเป็น "ข้อความ" ได้ จึงไม่เพี้ยน */
+const XQ=v=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'');
+function xlCol(i){let s='',n=i+1;while(n>0){const m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=(n-m-1)/26;}return s;}
+/* head=หัวตาราง · rows=ข้อมูล · types=['text'|'num'|'auto'] · widths=ความกว้างคอลัมน์ */
+function buildXLSX(sheetName,head,rows,types,widths){
+  types=types||head.map(()=>'text');
+  const isNum=(v,t)=>t==='num'||(t==='auto'&&String(v).trim()!==''&&/^-?\d+(\.\d+)?$/.test(String(v).trim()));
+  const cellXML=(ci,ri,v,t)=>{
+    if(v==null||v==='')return '';
+    const ref=xlCol(ci)+ri;
+    if(isNum(v,t)&&isFinite(+v))return `<c r="${ref}"><v>${+v}</v></c>`;
+    return `<c r="${ref}" t="inlineStr" s="2"><is><t xml:space="preserve">${XQ(v)}</t></is></c>`;
+  };
+  let body=`<row r="1">`+head.map((h,i)=>`<c r="${xlCol(i)}1" t="inlineStr" s="1"><is><t>${XQ(h)}</t></is></c>`).join('')+`</row>`;
+  rows.forEach((r,ri)=>{body+=`<row r="${ri+2}">`+r.map((v,ci)=>cellXML(ci,ri+2,v,types[ci])).join('')+`</row>`;});
+  const cols=`<cols>`+head.map((h,i)=>`<col min="${i+1}" max="${i+1}" width="${(widths&&widths[i])||16}" customWidth="1"${types[i]==='text'?' style="2"':''}/>`).join('')+`</cols>`;
+  const last=xlCol(head.length-1)+(rows.length+1);
+  const sheet=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:${last}"/><sheetViews><sheetView workbookViewId="0" tabSelected="1"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A2" sqref="A2"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${body}</sheetData><autoFilter ref="A1:${xlCol(head.length-1)}${Math.max(rows.length+1,2)}"/></worksheet>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Tahoma"/></font><font><b/><sz val="11"/><name val="Tahoma"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDCE9F7"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+  const wb=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${XQ(String(sheetName).replace(/[\\\/\?\*\[\]:]/g,' ').slice(0,31))}" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const wbRels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
+  const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const ct=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`;
+  return zipStore([
+    {name:'[Content_Types].xml',data:textToBytes(ct)},
+    {name:'_rels/.rels',data:textToBytes(rels)},
+    {name:'xl/workbook.xml',data:textToBytes(wb)},
+    {name:'xl/_rels/workbook.xml.rels',data:textToBytes(wbRels)},
+    {name:'xl/styles.xml',data:textToBytes(styles)},
+    {name:'xl/worksheets/sheet1.xml',data:textToBytes(sheet)},
+  ]);
+}
+
+/* ===== ตัวอ่านไฟล์ Excel (.xlsx) =====
+   เพื่อให้เจ้าหน้าที่กรอกใน Excel แล้วนำเข้าได้เลย ไม่ต้องแปลงเป็น CSV ก่อน
+   (ขั้นตอนแปลงไฟล์คือจุดที่ข้อมูลเพี้ยนบ่อยที่สุด) */
+function inflateRaw(src){
+  const MAXB=15;
+  const LBASE=[3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  const LEXT=[0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  const DBASE=[1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  const DEXT=[0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  const ORD=[16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+  let pos=0,buf=0,cnt=0;
+  const bits=n=>{while(cnt<n){if(pos>=src.length)throw new Error('ไฟล์ไม่สมบูรณ์');buf|=src[pos++]<<cnt;cnt+=8;}
+    const v=buf&((1<<n)-1);buf>>>=n;cnt-=n;return v;};
+  const build=L=>{const count=new Int32Array(MAXB+1);for(let i=0;i<L.length;i++)count[L[i]]++;count[0]=0;
+    const offs=new Int32Array(MAXB+2);for(let i=1;i<=MAXB;i++)offs[i+1]=offs[i]+count[i];
+    const sym=new Int32Array(L.length);for(let s=0;s<L.length;s++)if(L[s])sym[offs[L[s]]++]=s;
+    return{count,sym};};
+  const dec=h=>{let code=0,first=0,index=0;
+    for(let len=1;len<=MAXB;len++){code|=bits(1);const c=h.count[len];
+      if(code-first<c)return h.sym[index+(code-first)];
+      index+=c;first=(first+c)<<1;code<<=1;}
+    throw new Error('รหัสบีบอัดผิดรูป');};
+  let out=new Uint8Array(Math.max(1024,src.length*4)),len=0;
+  const put=b=>{if(len===out.length){const n=new Uint8Array(out.length*2);n.set(out);out=n;}out[len++]=b;};
+  let FIX_L=null,FIX_D=null;
+  for(;;){
+    const last=bits(1),type=bits(2);
+    if(type===0){
+      buf=0;cnt=0;
+      const l=src[pos]|(src[pos+1]<<8);pos+=4;
+      for(let i=0;i<l;i++)put(src[pos++]);
+    }else{
+      let hl,hd;
+      if(type===1){
+        if(!FIX_L){const L=new Uint8Array(288);
+          for(let i=0;i<144;i++)L[i]=8;for(let i=144;i<256;i++)L[i]=9;
+          for(let i=256;i<280;i++)L[i]=7;for(let i=280;i<288;i++)L[i]=8;
+          FIX_L=build(L);FIX_D=build(new Uint8Array(30).fill(5));}
+        hl=FIX_L;hd=FIX_D;
+      }else if(type===2){
+        const nlen=bits(5)+257,ndist=bits(5)+1,ncode=bits(4)+4;
+        const cl=new Uint8Array(19);
+        for(let i=0;i<ncode;i++)cl[ORD[i]]=bits(3);
+        const hc=build(cl);
+        const L=new Uint8Array(nlen+ndist);
+        for(let i=0;i<L.length;){
+          const s=dec(hc);
+          if(s<16)L[i++]=s;
+          else if(s===16){const p=L[i-1];let r=3+bits(2);while(r--)L[i++]=p;}
+          else if(s===17){let r=3+bits(3);while(r--)L[i++]=0;}
+          else{let r=11+bits(7);while(r--)L[i++]=0;}
+        }
+        hl=build(L.subarray(0,nlen));hd=build(L.subarray(nlen));
+      }else throw new Error('ชนิดบล็อกไม่ถูกต้อง');
+      for(;;){
+        const s=dec(hl);
+        if(s<256)put(s);
+        else if(s===256)break;
+        else{
+          const si=s-257,l=LBASE[si]+bits(LEXT[si]);
+          const ds=dec(hd),d=DBASE[ds]+bits(DEXT[ds]);
+          let from=len-d;for(let i=0;i<l;i++)put(out[from+i]);
+        }
+      }
+    }
+    if(last)break;
+  }
+  return out.subarray(0,len);
+}
+function zipRead(bytes){
+  const dv=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  let eo=-1;
+  for(let i=bytes.length-22;i>=0&&i>bytes.length-66000;i--)
+    if(dv.getUint32(i,true)===0x06054b50){eo=i;break;}
+  if(eo<0)throw new Error('ไม่ใช่ไฟล์ .xlsx (ไม่พบโครงสร้างไฟล์)');
+  const n=dv.getUint16(eo+10,true);let p=dv.getUint32(eo+16,true);
+  const files=new Map(),td=new TextDecoder('utf-8');
+  for(let i=0;i<n;i++){
+    if(dv.getUint32(p,true)!==0x02014b50)break;
+    const method=dv.getUint16(p+10,true),csize=dv.getUint32(p+20,true),
+      nlen=dv.getUint16(p+28,true),elen=dv.getUint16(p+30,true),clen=dv.getUint16(p+32,true),
+      lo=dv.getUint32(p+42,true);
+    const name=td.decode(bytes.subarray(p+46,p+46+nlen));
+    const lnlen=dv.getUint16(lo+26,true),lelen=dv.getUint16(lo+28,true);
+    const start=lo+30+lnlen+lelen,raw=bytes.subarray(start,start+csize);
+    files.set(name,method===0?raw:inflateRaw(raw));
+    p+=46+nlen+elen+clen;
+  }
+  return files;
+}
+function xlsxFirstSheet(bytes){
+  const files=zipRead(bytes),td=new TextDecoder('utf-8');
+  const txt=n=>files.has(n)?td.decode(files.get(n)):'';
+  /* หาชีตแรกตามลำดับที่ระบุใน workbook.xml */
+  let target='xl/worksheets/sheet1.xml';
+  const wb=txt('xl/workbook.xml'),rl=txt('xl/_rels/workbook.xml.rels');
+  const m=wb.match(/<sheet\b[^>]*\/?>/);
+  const rid=m&&(m[0].match(/r:id="([^"]+)"/)||[])[1];
+  if(rid){
+    const re=new RegExp('<Relationship[^>]*Id="'+rid+'"[^>]*>');
+    const r=rl.match(re);
+    const t=r&&(r[0].match(/Target="([^"]+)"/)||[])[1];
+    if(t)target=('xl/'+t.replace(/^\/?xl\//,'')).replace(/\/\.\//g,'/');
+  }
+  if(!files.has(target)){
+    target=[...files.keys()].find(k=>/^xl\/worksheets\/.*\.xml$/.test(k))||'';
+    if(!target)throw new Error('ไม่พบแผ่นงานในไฟล์');
+  }
+  /* คลังข้อความร่วม */
+  const ss=[],sx=txt('xl/sharedStrings.xml');
+  if(sx)for(const si of sx.split('<si>').slice(1))
+    ss.push((si.split('</si>')[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g)||[])
+      .map(x=>x.replace(/<[^>]+>/g,'')).join(''));
+  const unesc=v=>v.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+    .replace(/&apos;/g,"'").replace(/&#(\d+);/g,(_,d)=>String.fromCharCode(+d)).replace(/&amp;/g,'&');
+  const sheet=txt(target),rows=[];
+  for(const rm of sheet.match(/<row\b[^>]*>[\s\S]*?<\/row>|<row\b[^>]*\/>/g)||[]){
+    const row=[];
+    for(const cm of rm.match(/<c\b[^>]*>[\s\S]*?<\/c>|<c\b[^>]*\/>/g)||[]){
+      const ref=(cm.match(/\sr="([A-Z]+)\d+"/)||[])[1]||'';
+      let ci=0;for(let i=0;i<ref.length;i++)ci=ci*26+(ref.charCodeAt(i)-64);ci=ci?ci-1:row.length;
+      const t=(cm.match(/\st="([^"]+)"/)||[])[1]||'';
+      let v='';
+      if(t==='inlineStr')v=(cm.match(/<t[^>]*>([\s\S]*?)<\/t>/g)||[]).map(x=>x.replace(/<[^>]+>/g,'')).join('');
+      else{const vm=cm.match(/<v>([\s\S]*?)<\/v>/);v=vm?vm[1]:'';
+        if(t==='s')v=ss[+v]!==undefined?ss[+v]:'';}
+      while(row.length<ci)row.push('');
+      row[ci]=unesc(String(v));
+    }
+    rows.push(row);
+  }
+  return rows.filter(r=>r.some(x=>String(x).trim()!==''));
+}
+const XLSX_MIME='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+function downloadXLSX(name,sheetName,head,rows,types,widths){
+  downloadBytes(buildXLSX(sheetName,head,rows,types,widths),name,XLSX_MIME);
 }
 
 function renderReport(){
@@ -1903,7 +2127,7 @@ function renderHelp(){
       <li>ชื่อผู้เก็บเงิน และหัวหน้าหน่วยงานคลัง สำหรับช่องลงนามในใบเสร็จ</li>
     </ul>
     <h4>2. เพิ่มผู้ใช้น้ำ — เมนู 👥 ผู้ใช้น้ำ</h4>
-    <p>พิมพ์ทีละรายด้วยปุ่ม <b>+ เพิ่มผู้ใช้น้ำ</b> หรือนำเข้าทีเดียวจาก Excel (ดูหัวข้อ 👥 นำเข้าจาก Excel)</p>
+    <p>พิมพ์ทีละรายด้วยปุ่ม <b>+ เพิ่มผู้ใช้น้ำ</b> หรือนำเข้าทีเดียวจากไฟล์ Excel (ดูหัวข้อ 👥 นำเข้าผู้ใช้น้ำจาก Excel)</p>
     <p><b>เลขมาตรเริ่มต้น</b> คือเลขบนหน้าปัดมาตร ณ วันที่เริ่มใช้ระบบ ระบบจะใช้เลขนี้เป็น "เลขครั้งก่อน" ของบิลใบแรก</p>
     <h4>3. ใส่ยอดเงินยกมา — เมนู 🧾 รายจ่าย</h4>
     <p>กดปุ่ม <b>หมวดรายจ่าย / ยอดเงินยกมา</b> แล้วใส่เงินคงเหลือของกิจการประปา ณ วันเริ่มใช้ระบบ เพื่อให้งบการเงินตรงกับบัญชีจริง</p>
@@ -2006,11 +2230,13 @@ function renderHelp(){
 
   ${sec('imp','👥','นำเข้าผู้ใช้น้ำจาก Excel',`
     <ol>
-      <li>เมนู 👥 ผู้ใช้น้ำ → กด <b>ดาวน์โหลดแบบฟอร์ม CSV</b></li>
+      <li>เมนู 👥 ผู้ใช้น้ำ → กด <b>ดาวน์โหลดแบบฟอร์ม Excel</b></li>
       <li>เปิดด้วย Excel กรอกข้อมูลตามหัวคอลัมน์: เลขที่มาตร · ชื่อ-สกุล · บ้านเลขที่ · หมู่ที่ · เบอร์โทร · เลขมาตรเริ่มต้น</li>
-      <li>บันทึกเป็นชนิด <b>CSV UTF-8</b> (สำคัญ ไม่งั้นภาษาไทยจะเพี้ยน)</li>
-      <li>กด <b>📥 นำเข้าจาก Excel (CSV)</b> แล้วเลือกไฟล์</li>
+      <li>กด Save ตามปกติ <b>ไม่ต้องแปลงเป็น CSV</b></li>
+      <li>กด <b>📥 นำเข้าจาก Excel</b> แล้วเลือกไฟล์ .xlsx นั้น</li>
     </ol>
+    <p>แบบฟอร์มตั้งช่อง เลขที่มาตร · บ้านเลขที่ · เบอร์โทร ไว้เป็นชนิด <b>ข้อความ</b> แล้ว บ้านเลขที่ <b>23/2</b> จึงไม่กลายเป็นวันที่ และเบอร์ <b>081…</b> จะไม่ถูกตัดเลขศูนย์หน้าทิ้ง</p>
+    <p>ถ้ามีไฟล์ <b>.csv</b> เดิมอยู่แล้วก็นำเข้าได้เหมือนกัน ระบบดูให้เองว่าเป็นไฟล์ชนิดไหน</p>
     <p>ระบบจะ<b>ตรวจทั้งไฟล์ก่อน</b> แล้วบอกว่านำเข้าได้กี่ราย ข้ามกี่รายและเพราะอะไร (เช่น เลขมาตรซ้ำ ไม่มีชื่อ) จากนั้นจึงถามยืนยัน — ไม่มีกรณีข้อมูลเข้าไปครึ่ง ๆ กลาง ๆ</p>
     <p>ระบบสำรองข้อมูลอัตโนมัติให้ก่อนนำเข้าทุกครั้ง ถ้านำเข้าผิดสามารถย้อนกลับได้ที่ ⚙️ ตั้งค่า → 🕘 สำรองอัตโนมัติในเครื่อง</p>`)}
 
@@ -2094,7 +2320,7 @@ function renderHelp(){
     <h4>ส่งออกไปทำแผนที่</h4>
     <table><tr><th style="width:190px">ปุ่ม</th><th>ได้อะไร</th></tr>
       <tr><td><b>🗺️ ส่งออกพิกัด (GeoJSON)</b></td><td>ไฟล์ .geojson ลากเข้า QGIS ได้เลย เป็นจุดมาตรน้ำพร้อมข้อมูล เลขมาตร ชื่อ บ้านเลขที่ หมู่ ค่าเฉลี่ยการใช้น้ำ และยอดค้างชำระ</td></tr>
-      <tr><td><b>⬇️ ส่งออกทะเบียน (CSV)</b></td><td>ตารางทะเบียนทั้งหมดพร้อมพิกัดและสถิติการใช้น้ำ เปิดด้วย Excel</td></tr></table>
+      <tr><td><b>⬇️ ส่งออกทะเบียน (Excel)</b></td><td>ตารางทะเบียนทั้งหมดพร้อมพิกัดและสถิติการใช้น้ำ เปิดด้วย Excel ได้ทันที ตัวเลขไม่เพี้ยน</td></tr></table>
     <h4>ใช้ทำอะไรได้บ้าง</h4>
     <ul>
       <li><b>ซ้อนกับแผนที่แปลงที่ดิน</b> — เห็นว่าบ้านหลังไหนอยู่แปลงไหน</li>
@@ -2132,8 +2358,9 @@ function renderHelp(){
     <p>ถูกต้องแล้ว ต้องไปยกเลิกใบเสร็จที่เมนู 💵 รับชำระ ก่อน บิลจึงจะกลับมาแก้ไขได้</p>
     <h4>พิมพ์แล้วขอบกระดาษโดนตัด</h4>
     <p>ตั้งค่าเครื่องพิมพ์เป็นกระดาษ A4 ขอบกระดาษ 10 มม. และปิดตัวเลือก "ปรับขนาดให้พอดีหน้า"</p>
-    <h4>นำเข้า CSV แล้วภาษาไทยเพี้ยน</h4>
-    <p>ตอนบันทึกจาก Excel ต้องเลือกชนิดไฟล์เป็น <b>CSV UTF-8</b> ไม่ใช่ CSV ธรรมดา</p>
+    <h4>เปิดไฟล์ที่ส่งออกแล้วเลขเพี้ยน</h4>
+    <p>ใช้ปุ่มที่ลงท้ายว่า <b>(Excel)</b> ไฟล์ .xlsx จะกำหนดชนิดช่องไว้ให้แล้ว ไม่เพี้ยน</p>
+    <p>ถ้าจำเป็นต้องใช้ไฟล์ .csv จริง ๆ อย่าดับเบิลคลิกเปิด ให้เปิด Excel เปล่าก่อน แล้วใช้ <b>ข้อมูล → จากข้อความ/CSV</b> และตั้งชนิดคอลัมน์ บ้านเลขที่/เบอร์โทร เป็น <b>ข้อความ</b> ก่อนกดโหลด</p>
     <h4>ขึ้นเตือนว่าพื้นที่เก็บข้อมูลใกล้เต็ม</h4>
     <p>สำรองข้อมูลทันที แล้วติดต่อผู้ดูแลระบบ อาจต้องเปิดโปรแกรมด้วยวิธีอื่นเพื่อให้ใช้ฐานข้อมูลขนาดใหญ่ได้</p>
     <h4>เลขมาตรไม่ขยับเลยหลายเดือน</h4>

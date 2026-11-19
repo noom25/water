@@ -1,8 +1,8 @@
 /* ประปา อปท — Service Worker
    cache-first: ครั้งแรกต้องมีเน็ตเพื่อติดตั้ง ครั้งต่อ ๆ ไปเปิดได้แม้ไม่มีเน็ต
-   version: 20261119-192021
+   version: 20261119-214955
 */
-var VERSION = "20261119-192021";
+var VERSION = "20261119-214955";
 var CACHE = "prapa-" + VERSION;
 
 var ASSETS = [
